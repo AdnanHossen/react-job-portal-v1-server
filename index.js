@@ -2,10 +2,40 @@ const express = require("express");
 const cors = require("cors");
 const app = express();
 require("dotenv").config();
+const jwt = require("jsonwebtoken");
+const cookieParser = require("cookie-parser");
 const port = process.env.PORT || 5000;
 
-app.use(cors());
+app.use(
+  cors({
+    origin: ["http://localhost:5173"],
+    credentials: true,
+  })
+);
 app.use(express.json());
+app.use(cookieParser());
+
+// dedicated middleware for token verify
+const logger = (req, res, next) => {
+  console.log("inside the logger");
+  next();
+};
+
+const verifyToken = (req, res, next) => {
+  const token = req?.cookies?.token;
+
+  if (!token) {
+    return res.status(401).send({ message: "token doesn't match" });
+  }
+
+  jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
+    if (err) {
+      return res.status(401).send({ message: "unAuthorized Access" });
+    }
+    req.user = decoded;
+    next();
+  });
+};
 
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.w0hnc79.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
@@ -32,8 +62,27 @@ async function run() {
       .db("jobPortalDB")
       .collection("applications");
 
+    // aut related apis
+    app.post("/jwt", async (req, res) => {
+      const user = req.body;
+      // generate custom jwt
+      const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, {
+        expiresIn: "5h",
+      });
+
+      // set HTTPOnly Cookie
+      res
+        .cookie("token", token, {
+          httpOnly: true,
+          secure: false,
+          sameSite: "strict",
+        })
+        .send({ success: true });
+    });
+
     // read the data
-    app.get("/jobs", async (req, res) => {
+    app.get("/jobs", logger, async (req, res) => {
+      console.log("now inside the api");
       const cursor = jobsCollection.find({});
       const result = await cursor.toArray();
       res.send(result);
@@ -70,8 +119,16 @@ async function run() {
     });
 
     // getting with aggregate and email query
-    app.get("/applications", async (req, res) => {
+    app.get("/applications", verifyToken, async (req, res) => {
       const { applicantEmail, job_id } = req.query;
+
+      // console.log(`from inside of applications`, req.user);
+      // console.log(`from inside of applications`, applicantEmail);
+      // console.log(req.user?.user === applicantEmail);
+      if (req?.user?.user !== applicantEmail) {
+        return res.status(403).send({ message: "forbidden access" });
+      }
+
       const pipeline = [];
       // Filter by applicantEmail if provided
       if (applicantEmail) {

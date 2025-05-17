@@ -62,7 +62,7 @@ async function run() {
       .db("jobPortalDB")
       .collection("applications");
 
-    // aut related apis
+    // auth related apis
     app.post("/jwt", async (req, res) => {
       const user = req.body;
       // generate custom jwt
@@ -80,6 +80,17 @@ async function run() {
         .send({ success: true });
     });
 
+    // for logout
+    app.post("/logout", (req, res) => {
+      res
+        .clearCookie("token", {
+          httpOnly: true,
+          secure: false,
+          sameSite: "strict",
+        })
+        .send({ status: true });
+    });
+
     // read the data
     app.get("/jobs", logger, async (req, res) => {
       console.log("now inside the api");
@@ -88,17 +99,59 @@ async function run() {
       res.send(result);
     });
 
-    app.get("/posted-jobs", async (req, res) => {
-      const { hr_email } = req.query;
-      const query = {};
-      // Filter by hr_email if provided
-      if (hr_email) {
-        query.hr_email = hr_email;
+    // // read jobs through hr_email
+    // app.get("/posted-jobs", verifyToken, async (req, res) => {
+    //   const { hr_email } = req.query;
+    //   const query = {};
+    //   // Filter by hr_email if provided
+    //   if (hr_email) {
+    //     query.hr_email = hr_email;
+    //   }
+    //   // link http://localhost:5000/posted-jobs?hr_email=john.doe@google.com
+    //   // Fetch all fields of matching jobs, excluding _id
+    //   const jobs = await jobsCollection.find(query).toArray();
+    //   res.send(jobs);
+    //   console.log(hr_email);
+    // });
+
+    // to read all
+    app.get("/posted-jobs", verifyToken, async (req, res) => {
+      try {
+        // Get all query parameters from the request
+        const queryParams = req.query;
+
+        // Build the query object dynamically
+        const query = {};
+
+        // Add each query parameter to the query object if it exists in the request
+        for (const key in queryParams) {
+          // Only include non-empty parameters
+          if (queryParams[key]) {
+            query[key] = queryParams[key];
+          }
+        }
+
+        // If no query parameters were provided, return all jobs
+        if (Object.keys(query).length === 0) {
+          const allJobs = await jobsCollection.find({}).toArray();
+          return res.send(allJobs);
+        }
+
+        // Fetch jobs matching the dynamic query
+        const jobs = await jobsCollection.find(query).toArray();
+
+        if (jobs.length === 0) {
+          return res
+            .status(404)
+            .send({ message: "No jobs found matching the criteria" });
+        }
+
+        res.send(jobs);
+        console.log("Query executed:", query);
+      } catch (error) {
+        console.error("Error fetching jobs:", error);
+        res.status(500).send({ error: "Internal server error" });
       }
-      // Fetch all fields of matching jobs, excluding _id
-      const jobs = await jobsCollection.find(query).toArray();
-      res.send(jobs);
-      console.log(hr_email);
     });
 
     app.get("/categories", async (req, res) => {
@@ -176,6 +229,14 @@ async function run() {
         .aggregate(pipeline)
         .toArray();
       res.send(applications);
+    });
+
+    // post job into db
+    app.post("/add-job", verifyToken, async (req, res) => {
+      const body = req.body;
+      console.log(body);
+      const result = await jobsCollection.insertOne(body);
+      res.send(result);
     });
 
     // create or insert
